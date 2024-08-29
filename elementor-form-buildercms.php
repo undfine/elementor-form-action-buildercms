@@ -4,7 +4,7 @@
  * Plugin URI:
  * Description: An integration to add BuilderCMS action to Elementor Pro Forms
  * Author: Compass Marketing
- * Version: 2.0.1
+ * Version: 2.0.2
  * Text Domain: compassad
  * Author URI: https://compassad.com
 */
