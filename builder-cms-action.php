@@ -48,113 +48,159 @@ class BuilderCMS_Action extends \ElementorPro\Modules\Forms\Classes\Integration_
 	 */
 	public function run( $record, $ajax_handler ) {
         
-        
+        // Get form settings
 		$settings = $record->get( 'form_settings' );
 
 		// Get submitted Form data
 		$raw_fields = $record->get( 'fields' );
 
-		// Normalize the Form Data
-		$fields = [];
-		foreach ( $raw_fields as $id => $field ) {
-			$fields[ $id ] = $field['value'];
-		}
-
-		// Make sure that the user entered an email
-		// which is required by BuilderCMS's API to subsribe a user
-		if ( empty( $fields[ 'email' ] ) ) {
-			return;
-		}
-                
-
 		// Community settings at CMS
 		$CommunityNumber = $this->get_global_api_key();
 		$FollowUpCode = 'E';
 		$Source = 'Internet'; //Formerly 'Website'
-        $SourceDetail = !empty( $settings['builder_cms_source_detail'] ) ? esc_html( $settings['builder_cms_source_detail'] ) : '';
-		
-        $AdminEmail = esc_html( $settings['builder_cms_admin_email'] );
+        $SourceDetail = $settings['builder_cms_source_detail'] ?? '';
+        $AdminEmail = $settings['builder_cms_admin_email'] ?? '';
 		$SendAdminEmail = !empty($AdminEmail) ? 'True': '';
-		
-        // Map the BuilderCMS specific fields to the form field_names
+
+		// Map special BuilderCMS  fields
 		$mapped_fields = [
-				'FirstName' => esc_html( $fields['first_name']),
-				'LastName' => esc_html( $fields['last_name']),
-				'Email' => esc_html( $fields['email'] ),
-				'Phone' => esc_html( $fields['phone']),
-				'StreetAddress' => esc_html( $fields['street_address'] ).' '.esc_html( $fields['address_unit'] ),
-				'City' => esc_html( $fields['city'] ),
-				'State' => esc_html( $fields['state'] ),
-				'Zip' => esc_html( $fields['zip'] ),
-                
-				'PurchaseType' => (!empty( $fields['interests']) )? 'broker' :'' ,
-				'IPAddress' => \ElementorPro\Core\Utils::get_client_ip(),
-				'CMSCookieID' => isset( $_COOKIE['buildercms'] )? $_COOKIE['buildercms'] : '',
-				'Referrer' => isset( $_POST['referrer'] ) ? $_POST['referrer'] : '',
-                'Source' => $Source,
-                'SourceDetail' => $SourceDetail,
-				'CommunityNumber' => $CommunityNumber,
-				'FollowupCode' => $FollowUpCode,
-				
-				//extras
-				'AutoFollowupPlan' => (!empty( $fields['autofollowup']) )? esc_html( $fields['autofollowup'] ) : '' ,
-				'Company' => (!empty( $fields['company']) )? esc_html( $fields['company'] ) : '' ,
-				'License' => (!empty( $fields['license']) )? esc_html( $fields['license'] ) : '' ,
-                
-                // Admin Email
-                'AdminEmail' => $AdminEmail,
-                'AlwaysSendAdminEmail' => $SendAdminEmail
+			'CommunityNumber' => esc_html($CommunityNumber),
+			'FollowupCode' => $FollowUpCode,
+			'Source' => $Source,
+			'SourceDetail' => esc_html($SourceDetail),		
+			
+			// Extra fields
+			'IPAddress' => \ElementorPro\Core\Utils::get_client_ip() ?? '',
+			'CMSCookieID' => $_COOKIE['buildercms'] ?? '',
+			'Referrer' => $_POST['referrer'] ?? '',
+			
+			// Admin Email
+			'AdminEmail' => esc_html($AdminEmail),
+			'AlwaysSendAdminEmail' => $SendAdminEmail,
 		];
-        
-        // Setup custom fields    
-        for ($i=1; $i<=6; $i++){
-            
-            $_field = 'custom'.$i; 
-            
-            if ( isset( $fields[$_field]) && !empty( $fields[$_field] ) ) {
-                // Set "on" value for Acceptance fields = 'Yes'
-                $val = ($fields[$_field] == 'on') ? 'Yes' : esc_html( $fields[$_field] ); 
-                $mapped_fields['Custom'.$i] = $val;
-            }
-        }
-                    
-                
 
-		// Base url for Builder CMS
-        $base_page_url = 'https://www.buildercms.com/cms/custom/ProspectImport.aspx?ProspectData=';
-		$datastring = '';
+		// Required BuilderCMS fields
+		$requiredFields = array_fill_keys(['email', 'firstname', 'lastname','CommunityNumber','FollowupCode'], '');
 
-         /* //Send the request via POST
-        $json_page_url = 'https://buildercms.com/cms/CmsService.svc/CMSProspectImport';
-         wp_remote_post( $json_page_url , [
-            'body' => $mapped_fields,
-         ] );
-         */
+		// Merge with mapped fields
+		$mapped_fields = array_merge( $requiredFields, $mapped_fields );
 
+		// Prospect fields
+		$cmsUserFields = array_fill_keys([
+			'firstname',
+			'lastname',
+			'email',
+			'phone',
+			'workphone',
+			'cellphone',
+			'streetaddress',
+			'city',
+			'state',
+			'zip',
+			'country',
+			'international',
+			'autofollowupplan',
+			'interests',
+			'purchasetype',
+			'company',
+			'license',
+			'comments',
+		], '');
 
-		foreach ( $mapped_fields as $fieldname => $input ) {
-			if (!empty($input)){
-
-				// Tilde before every value except Firstname
-				if ($fieldname !='FirstName'){
-					$datastring .='~';
-				}
-				$datastring .= $fieldname.':'.$input;
-			}
-
+		// add the optional custom fields (1-6)
+		for ($i=1; $i<=6; $i++){
+			$cmsUserFields[ "custom$i" ] = '';
 		}
 
-    // Example $datastring = "FirstName:".$FirstName."~LastName:".$LastName."~Email:".$Email."~Phone:".$PhoneNumber."~StreetAddress:".$StreetAddress."~City:".$City."~State:".$State."~Zip:".$Zip.$interests."~CommunityNumber:".$CommunityNumber."~FollowupCode:E~Source:".$Source."~AdminEmail:".$AdminEmail;
 
-    // Encode data
-    $encoded_data = urlencode($datastring);
+		// Normalize the Form Data
+		foreach ( $raw_fields as $id => $field ) {
+			
+			// format the field name to remove spaces, dashes and underscores
+			$fieldname = strtolower( str_replace([' ','_','-'], '', $id ) );
+			$value = !empty( $field['value'] ) ? $field['value'] : '';
 
-    // Concatenate encoded string to url
-    $cms_url =  $base_page_url.$encoded_data;
+			// check if the value is "on" for acceptance and checkboxes, and set to "yes"
+			$value = ( $value == 'on') ? 'Yes' : esc_html( $value );
 
-    $request = new WP_Http();
-    $response = $request->post( $cms_url );
+			// check if the fieldname has a value and is in the list of BuilderCMS fields
+			if ( !empty( $value ) && isset( $cmsUserFields[ $fieldname ]) ) {
+				$mapped_fields[ $fieldname ] = $value;
+			}
+		}
+		
+		// check if the form has all required fields
+		$hasRequiredFields = count( $requiredFields ) == count( array_intersect_key( $requiredFields, $mapped_fields ) );
+		
 
+		// exit if the form does not have all required fields
+		if ( !$hasRequiredFields ) {
+			return new WP_Error( 'missing_cms_fields', __( 'Missing required fields' , "builder_cms" ), $mapped_fields );
+		}
+
+		// double check if "interests" is set (defaults to "broker" if true)
+		if ( !isset($mapped_fields['purchasetype']) && isset( $mapped_fields['interests']) ){
+			$mapped_fields['purchasetype'] = 'broker';
+			$mapped_fields['interests'] = ''; //unset this field
+		}
+
+		//filter out empty values
+		$mapped_fields = array_filter($mapped_fields);
+
+		// Send the data to Builder CMS
+		$this->send_request($mapped_fields);
+
+	}
+
+	private function send_request($data, $method = 'GET') {
+		// $url = get_home_url(); 
+		$url = 'https://www.buildercms.com/cms/custom/ProspectImport.aspx';
+
+		if ($method == 'POST'){
+			$url = 'https://buildercms.com/cms/CmsService.svc/CMSProspectImport';
+
+			// Send request
+			$response = wp_remote_post(
+				$url,
+				[
+					'method' => 'POST',
+					'headers' => [
+						'Content-Type' => 'application/json',
+					],
+					'body' => wp_json_encode($data),
+				]
+			);
+
+		} else {
+			// Encode the data
+			$datastring	= $this->encode_url_data($data); 
+			
+			// Format the URL string to be sent to Builder CMS
+			$request_url = "$url?ProspectData=$datastring";
+				
+			
+			// Send request
+			$response = wp_remote_get($request_url);
+		}
+
+		if ( ! is_wp_error( $response ) ) {
+			$body = json_decode( wp_remote_retrieve_body( $response ), true );
+			return $body;
+		} else {
+			$error_message = $response->get_error_message();
+			throw new Exception( $error_message );
+		}	
+	}
+
+	private function encode_url_data($data) {
+		// Format the URL string to be sent to Builder CMS
+		// example $datastring = "FirstName:".$FirstName."~LastName:".$LastName."~Email:".$Email."~Phone:".$PhoneNumber."~StreetAddress:".$StreetAddress."~City:".$City."~State:".$State."~Zip:".$Zip.$interests."~CommunityNumber:".$CommunityNumber."~FollowupCode:E~Source:".$Source."~AdminEmail:".$AdminEmail;
+	
+		$datastring = implode('~', array_map(function($key, $value) {
+			return $key.':'.$value;
+		}, array_keys($data), $data));
+	
+		return urlencode($datastring);	
 	}
 
 	/**
